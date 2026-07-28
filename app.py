@@ -84,6 +84,14 @@ def fill_template(rows, mapping):
         ws[cfg["Cell_DELV"]] = float(row["StdDevElevation"])
         matched += 1
 
+    # Any mapped point with no data this round gets NULL instead of a blank cell
+    found_names = {row["Point Name"] for row in rows}
+    for name, cfg in mapping.items():
+        if name not in found_names:
+            ws[cfg["Cell_DN"]] = "NULL"
+            ws[cfg["Cell_DE"]] = "NULL"
+            ws[cfg["Cell_DELV"]] = "NULL"
+
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
