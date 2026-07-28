@@ -6,9 +6,67 @@ import zipfile
 import csv
 from collections import defaultdict
 from datetime import datetime
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Font
+from openpyxl.chart import LineChart, BarChart, Reference
 
 NULL_FILL = PatternFill(start_color="FFF9C4", end_color="FFF9C4", fill_type="solid")
+
+def build_summary_workbook(summary_rows):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+    headers = ["Date", "Time", "Points Found", "Points Missing", "Missing Point Names", "Filename"]
+    for col, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=col, value=h).font = Font(bold=True)
+    for r, row in enumerate(summary_rows, start=2):
+        ws.cell(row=r, column=1, value=row["Date"])
+        ws.cell(row=r, column=2, value=row["Time"])
+        ws.cell(row=r, column=3, value=row["Points Found"])
+        ws.cell(row=r, column=4, value=row["Points Missing"])
+        ws.cell(row=r, column=5, value=row["Missing Point Names"])
+        ws.cell(row=r, column=6, value=row["Filename"])
+
+    last_row = len(summary_rows) + 1
+    trend = LineChart()
+    trend.title = "Points missing per round"
+    trend.y_axis.title = "Points missing"
+    data = Reference(ws, min_col=4, min_row=1, max_row=last_row)
+    cats = Reference(ws, min_col=6, min_row=2, max_row=last_row)
+    trend.add_data(data, titles_from_data=True)
+    trend.set_categories(cats)
+    trend.height, trend.width = 8, 18
+    ws.add_chart(trend, "H1")
+
+    counts = {}
+    for row in summary_rows:
+        names = row["Missing Point Names"]
+        if names:
+            for name in names.split(", "):
+                if name:
+                    counts[name] = counts.get(name, 0) + 1
+
+    ws2 = wb.create_sheet("Missing Point Ranking")
+    ws2.cell(row=1, column=1, value="Point Name").font = Font(bold=True)
+    ws2.cell(row=1, column=2, value="Times Missing").font = Font(bold=True)
+    for r, (name, count) in enumerate(sorted(counts.items(), key=lambda x: -x[1]), start=2):
+        ws2.cell(row=r, column=1, value=name)
+        ws2.cell(row=r, column=2, value=count)
+    if counts:
+        bar = BarChart()
+        bar.title = "Which points go missing most often"
+        bar.y_axis.title = "Times missing"
+        last_r = len(counts) + 1
+        data = Reference(ws2, min_col=2, min_row=1, max_row=last_r)
+        cats = Reference(ws2, min_col=1, min_row=2, max_row=last_r)
+        bar.add_data(data, titles_from_data=True)
+        bar.set_categories(cats)
+        bar.height, bar.width = 8, 18
+        ws2.add_chart(bar, "D1")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
 
 st.set_page_config(page_title="Landmark Surveys - Report Generator", layout="wide")
 st.title("Track Monitoring Report Generator")
@@ -173,6 +231,8 @@ if csv_file is not None:
 
             summary_df = pd.DataFrame(summary_rows)
             zf.writestr("_summary_log.csv", summary_df.to_csv(index=False))
+            summary_xlsx_buf = build_summary_workbook(summary_rows)
+            zf.writestr("_summary_report.xlsx", summary_xlsx_buf.read())
         zip_buf.seek(0)
 
         st.success(f"Generated {len(items)} report(s). {total_matched} point-values written, {total_unmatched} marked NULL (not found that round).")
