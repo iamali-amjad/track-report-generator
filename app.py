@@ -6,6 +6,9 @@ import zipfile
 import csv
 from collections import defaultdict
 from datetime import datetime
+from openpyxl.styles import PatternFill
+
+NULL_FILL = PatternFill(start_color="FFF9C4", end_color="FFF9C4", fill_type="solid")
 
 st.set_page_config(page_title="Landmark Surveys - Report Generator", layout="wide")
 st.title("Track Monitoring Report Generator")
@@ -84,19 +87,21 @@ def fill_template(rows, mapping):
         ws[cfg["Cell_DELV"]] = float(row["StdDevElevation"])
         matched += 1
 
-    # Any mapped point with no data this round gets NULL instead of a blank cell
+    # Any mapped point with no data this round gets NULL, highlighted yellow
     found_names = {row["Point Name"] for row in rows}
+    missing_points = []
     for name, cfg in mapping.items():
         if name not in found_names:
-            ws[cfg["Cell_DN"]] = "NULL"
-            ws[cfg["Cell_DE"]] = "NULL"
-            ws[cfg["Cell_DELV"]] = "NULL"
+            for cell_ref in (cfg["Cell_DN"], cfg["Cell_DE"], cfg["Cell_DELV"]):
+                ws[cell_ref] = "NULL"
+                ws[cell_ref].fill = NULL_FILL
+            missing_points.append(name)
 
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     fname = dt.strftime("%m-%d-%y_%I%M%p").lstrip("0").lower() + ".xlsx"
-    return fname, buf, matched, unmatched
+    return fname, buf, matched, unmatched, date_str, time_str, missing_points
 
 if csv_file is not None:
     mapping_lookup = {
@@ -115,17 +120,28 @@ if csv_file is not None:
         items = list(rounds.items())[:limit]
         zip_buf = io.BytesIO()
         total_matched, total_unmatched = 0, 0
+        summary_rows = []
         progress = st.progress(0)
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, (ts, rows) in enumerate(items):
-                fname, filebuf, matched, unmatched = fill_template(rows, mapping_lookup)
+                fname, filebuf, matched, unmatched, date_str, time_str, missing_points = fill_template(rows, mapping_lookup)
                 zf.writestr(fname, filebuf.read())
                 total_matched += matched
                 total_unmatched += unmatched
+                summary_rows.append({
+                    "Date": date_str, "Time": time_str,
+                    "Points Found": matched, "Points Missing": unmatched,
+                    "Missing Point Names": ", ".join(missing_points),
+                    "Filename": fname,
+                })
                 progress.progress((i + 1) / len(items))
+
+            summary_df = pd.DataFrame(summary_rows)
+            zf.writestr("_summary_log.csv", summary_df.to_csv(index=False))
         zip_buf.seek(0)
 
-        st.success(f"Generated {len(items)} report(s). {total_matched} point-values written, {total_unmatched} left blank (not found that round).")
+        st.success(f"Generated {len(items)} report(s). {total_matched} point-values written, {total_unmatched} marked NULL (not found that round).")
+        st.dataframe(summary_df, use_container_width=True)
         st.download_button(
             "Download all reports (.zip)",
             zip_buf,
