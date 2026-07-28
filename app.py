@@ -176,6 +176,36 @@ if csv_file is not None:
         zip_buf.seek(0)
 
         st.success(f"Generated {len(items)} report(s). {total_matched} point-values written, {total_unmatched} marked NULL (not found that round).")
+
+        st.subheader("3. What this tells you")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Missing points over time**")
+            st.caption("A rising trend usually means an equipment or access issue, not random noise.")
+            trend = summary_df[["Filename", "Points Missing"]].copy()
+            trend = trend.set_index("Filename")
+            st.line_chart(trend)
+
+        with col2:
+            st.write("**Which points go missing most often**")
+            st.caption("If one point is missing constantly, that's worth checking on site.")
+            all_missing = summary_df["Missing Point Names"].dropna()
+            counts = {}
+            for entry in all_missing:
+                for name in str(entry).split(", "):
+                    if name:
+                        counts[name] = counts.get(name, 0) + 1
+            if counts:
+                counts_df = pd.DataFrame(
+                    sorted(counts.items(), key=lambda x: -x[1]),
+                    columns=["Point", "Times missing"]
+                ).set_index("Point")
+                st.bar_chart(counts_df)
+            else:
+                st.write("No missing points in this batch, nice.")
+
+        st.subheader("4. Full log")
         st.dataframe(summary_df, use_container_width=True)
         st.download_button(
             "Download all reports (.zip)",
