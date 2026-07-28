@@ -61,6 +61,14 @@ def load_rounds(file):
             rounds[ts].append(row)
     return rounds
 
+def safe_write(ws, cell_ref, value, fill=None):
+    if not isinstance(cell_ref, str) or not CELL_PATTERN.match(cell_ref.strip()):
+        return False
+    ws[cell_ref.strip()] = value
+    if fill:
+        ws[cell_ref.strip()].fill = fill
+    return True
+
 def fill_template(rows, mapping):
     with open(TEMPLATE_PATH, "rb") as f:
         wb = openpyxl.load_workbook(f)
@@ -82,19 +90,22 @@ def fill_template(rows, mapping):
         if not cfg:
             unmatched += 1
             continue
-        ws[cfg["Cell_DN"]] = float(row["StdDevNorthing"])
-        ws[cfg["Cell_DE"]] = float(row["StdDevEasting"])
-        ws[cfg["Cell_DELV"]] = float(row["StdDevElevation"])
-        matched += 1
+        ok = (safe_write(ws, cfg["Cell_DN"], float(row["StdDevNorthing"]))
+              and safe_write(ws, cfg["Cell_DE"], float(row["StdDevEasting"]))
+              and safe_write(ws, cfg["Cell_DELV"], float(row["StdDevElevation"])))
+        if ok:
+            matched += 1
+        else:
+            unmatched += 1
 
     # Any mapped point with no data this round gets NULL, highlighted yellow
     found_names = {row["Point Name"] for row in rows}
     missing_points = []
     for name, cfg in mapping.items():
         if name not in found_names:
-            for cell_ref in (cfg["Cell_DN"], cfg["Cell_DE"], cfg["Cell_DELV"]):
-                ws[cell_ref] = "NULL"
-                ws[cell_ref].fill = NULL_FILL
+            safe_write(ws, cfg["Cell_DN"], "NULL", NULL_FILL)
+            safe_write(ws, cfg["Cell_DE"], "NULL", NULL_FILL)
+            safe_write(ws, cfg["Cell_DELV"], "NULL", NULL_FILL)
             missing_points.append(name)
 
     buf = io.BytesIO()
@@ -103,10 +114,34 @@ def fill_template(rows, mapping):
     fname = dt.strftime("%m-%d-%y_%I%M%p").lstrip("0").lower() + ".xlsx"
     return fname, buf, matched, unmatched, date_str, time_str, missing_points
 
+import re
+
+CELL_PATTERN = re.compile(r"^[A-Z]+[0-9]+$")
+
+def validate_mapping(mapping_df):
+    """Returns (clean_lookup_dict, list_of_problem_rows)."""
+    clean = {}
+    problems = []
+    for row in mapping_df.to_dict("records"):
+        name = str(row.get("PointName", "")).strip()
+        cells = [row.get("Cell_DN"), row.get("Cell_DE"), row.get("Cell_DELV")]
+        if not name or name.lower() == "nan":
+            continue  # blank row, ignore silently
+        bad_cells = [c for c in cells if not isinstance(c, str) or not CELL_PATTERN.match(str(c).strip())]
+        if bad_cells:
+            problems.append(name)
+            continue
+        row["Cell_DN"], row["Cell_DE"], row["Cell_DELV"] = [str(c).strip() for c in cells]
+        clean[name] = row
+    return clean, problems
+
 if csv_file is not None:
-    mapping_lookup = {
-        row["PointName"]: row for row in st.session_state.mapping_df.to_dict("records")
-    }
+    mapping_lookup, problem_rows = validate_mapping(st.session_state.mapping_df)
+    if problem_rows:
+        st.warning(
+            f"These mapping rows are missing a valid cell reference (like C15) and will be "
+            f"skipped: {', '.join(problem_rows)}. Fix them in the table above and re-upload if needed."
+        )
     rounds = load_rounds(csv_file)
     st.write(f"Found **{len(rounds)}** rounds in this file.")
 
