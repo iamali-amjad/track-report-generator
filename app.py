@@ -75,12 +75,27 @@ st.caption("Upload a CSV export, review the point mapping, and download the fill
 TEMPLATE_PATH = "TRACK_MONITORING_REPORT.xlsx"
 DEFAULT_MAPPING_PATH = "point_mapping.csv"
 HEADER_ROWS = [(2, 3), (45, 46), (88, 89), (131, 132)]
+LS_FILE_CELLS = ["I1", "I44", "I87", "I130"]
+PROJECT_CELLS = ["D7", "D50", "D93", "D136"]
+CONTRACTOR_CELLS = ["D8", "D51", "D94", "D137"]
+
+st.subheader("1. Report details")
+st.write("These update every track section in the template automatically.")
+col_a, col_b, col_c = st.columns(3)
+with col_a:
+    ls_file = st.text_input("LS File #", value="25146")
+with col_b:
+    project_name = st.text_input("Project", value="STAFFORD ROAD SANITARY SEWER PHASE I")
+with col_c:
+    contractor_name = st.text_input("Contractor", value="MONTANA CONSTRUCTION")
+
+st.divider()
 
 # ---------- Mapping table (editable in-browser) ----------
 if "mapping_df" not in st.session_state:
     st.session_state.mapping_df = pd.read_csv(DEFAULT_MAPPING_PATH)
 
-st.subheader("1. Point mapping")
+st.subheader("2. Point mapping")
 st.write("Add, remove, or edit rows below. Each Point Name needs a TMP number and the exact cells to write into.")
 edited = st.data_editor(
     st.session_state.mapping_df,
@@ -107,7 +122,7 @@ with col2:
 st.divider()
 
 # ---------- CSV upload and processing ----------
-st.subheader("2. Upload CSV export")
+st.subheader("3. Upload CSV export")
 csv_file = st.file_uploader("CSV file from the field device", type="csv", key="data_csv")
 
 def load_rounds(file):
@@ -119,15 +134,22 @@ def load_rounds(file):
             rounds[ts].append(row)
     return rounds
 
-def safe_write(ws, cell_ref, value, fill=None):
+def safe_write(wb, sheet_name, cell_ref, value, fill=None):
     if not isinstance(cell_ref, str) or not CELL_PATTERN.match(cell_ref.strip()):
         return False
+    if not isinstance(sheet_name, str) or not sheet_name.strip():
+        sheet_name = "Sheet1"
+    else:
+        sheet_name = sheet_name.strip()
+    if sheet_name not in wb.sheetnames:
+        return False
+    ws = wb[sheet_name]
     ws[cell_ref.strip()] = value
     if fill:
         ws[cell_ref.strip()].fill = fill
     return True
 
-def fill_template(rows, mapping):
+def fill_template(rows, mapping, ls_file, project_name, contractor_name):
     with open(TEMPLATE_PATH, "rb") as f:
         wb = openpyxl.load_workbook(f)
     ws = wb["Sheet1"]
@@ -141,6 +163,13 @@ def fill_template(rows, mapping):
         ws[f"I{date_row}"] = date_str
         ws[f"I{time_row}"] = time_str
 
+    for cell_ref in LS_FILE_CELLS:
+        ws[cell_ref] = ls_file
+    for cell_ref in PROJECT_CELLS:
+        ws[cell_ref] = project_name
+    for cell_ref in CONTRACTOR_CELLS:
+        ws[cell_ref] = contractor_name
+
     matched, unmatched = 0, 0
     for row in rows:
         name = row["Point Name"]
@@ -148,9 +177,10 @@ def fill_template(rows, mapping):
         if not cfg:
             unmatched += 1
             continue
-        ok = (safe_write(ws, cfg["Cell_DN"], float(row["StdDevNorthing"]))
-              and safe_write(ws, cfg["Cell_DE"], float(row["StdDevEasting"]))
-              and safe_write(ws, cfg["Cell_DELV"], float(row["StdDevElevation"])))
+        sheet = cfg.get("Sheet", "Sheet1")
+        ok = (safe_write(wb, sheet, cfg["Cell_DN"], float(row["StdDevNorthing"]))
+              and safe_write(wb, sheet, cfg["Cell_DE"], float(row["StdDevEasting"]))
+              and safe_write(wb, sheet, cfg["Cell_DELV"], float(row["StdDevElevation"])))
         if ok:
             matched += 1
         else:
@@ -161,9 +191,10 @@ def fill_template(rows, mapping):
     missing_points = []
     for name, cfg in mapping.items():
         if name not in found_names:
-            safe_write(ws, cfg["Cell_DN"], "NULL", NULL_FILL)
-            safe_write(ws, cfg["Cell_DE"], "NULL", NULL_FILL)
-            safe_write(ws, cfg["Cell_DELV"], "NULL", NULL_FILL)
+            sheet = cfg.get("Sheet", "Sheet1")
+            safe_write(wb, sheet, cfg["Cell_DN"], "NULL", NULL_FILL)
+            safe_write(wb, sheet, cfg["Cell_DE"], "NULL", NULL_FILL)
+            safe_write(wb, sheet, cfg["Cell_DELV"], "NULL", NULL_FILL)
             missing_points.append(name)
 
     buf = io.BytesIO()
@@ -217,7 +248,9 @@ if csv_file is not None:
         progress = st.progress(0)
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, (ts, rows) in enumerate(items):
-                fname, filebuf, matched, unmatched, date_str, time_str, missing_points = fill_template(rows, mapping_lookup)
+                fname, filebuf, matched, unmatched, date_str, time_str, missing_points = fill_template(
+                    rows, mapping_lookup, ls_file, project_name, contractor_name
+                )
                 zf.writestr(fname, filebuf.read())
                 total_matched += matched
                 total_unmatched += unmatched
@@ -237,7 +270,7 @@ if csv_file is not None:
 
         st.success(f"Generated {len(items)} report(s). {total_matched} point-values written, {total_unmatched} marked NULL (not found that round).")
 
-        st.subheader("3. What this tells you")
+        st.subheader("4. What this tells you")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -265,7 +298,7 @@ if csv_file is not None:
             else:
                 st.write("No missing points in this batch, nice.")
 
-        st.subheader("4. Full log")
+        st.subheader("5. Full log")
         st.dataframe(summary_df, use_container_width=True)
         st.download_button(
             "Download all reports (.zip)",
