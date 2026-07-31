@@ -78,6 +78,8 @@ HEADER_ROWS = [(2, 3), (45, 46), (88, 89), (131, 132)]
 LS_FILE_CELLS = ["I1", "I44", "I87", "I130"]
 PROJECT_CELLS = ["D7", "D50", "D93", "D136"]
 CONTRACTOR_CELLS = ["D8", "D51", "D94", "D137"]
+CERT_CELLS = ["H5", "H48", "H91", "H134"]
+REV_CELLS = ["I8", "I51", "I94", "I137"]
 
 st.subheader("1. Report details")
 st.write("These update every track section in the template automatically.")
@@ -88,6 +90,12 @@ with col_b:
     project_name = st.text_input("Project", value="STAFFORD ROAD SANITARY SEWER PHASE I")
 with col_c:
     contractor_name = st.text_input("Contractor", value="MONTANA CONSTRUCTION")
+
+col_d, col_e = st.columns(2)
+with col_d:
+    cert_number = st.text_input("Cert. of Auth. #", value="24GA2872300")
+with col_e:
+    rev_number = st.text_input("REV", value="0")
 
 st.divider()
 
@@ -149,7 +157,7 @@ def safe_write(wb, sheet_name, cell_ref, value, fill=None):
         ws[cell_ref.strip()].fill = fill
     return True
 
-def fill_template(rows, mapping, ls_file, project_name, contractor_name):
+def fill_template(rows, mapping, ls_file, project_name, contractor_name, cert_number, rev_number):
     with open(TEMPLATE_PATH, "rb") as f:
         wb = openpyxl.load_workbook(f)
     ws = wb["Sheet1"]
@@ -169,6 +177,10 @@ def fill_template(rows, mapping, ls_file, project_name, contractor_name):
         ws[cell_ref] = project_name
     for cell_ref in CONTRACTOR_CELLS:
         ws[cell_ref] = contractor_name
+    for cell_ref in CERT_CELLS:
+        ws[cell_ref] = f"Cert. of Auth. #{cert_number}"
+    for cell_ref in REV_CELLS:
+        ws[cell_ref] = f"REV {rev_number}"
 
     matched, unmatched = 0, 0
     for row in rows:
@@ -249,7 +261,7 @@ if csv_file is not None:
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, (ts, rows) in enumerate(items):
                 fname, filebuf, matched, unmatched, date_str, time_str, missing_points = fill_template(
-                    rows, mapping_lookup, ls_file, project_name, contractor_name
+                    rows, mapping_lookup, ls_file, project_name, contractor_name, cert_number, rev_number
                 )
                 zf.writestr(fname, filebuf.read())
                 total_matched += matched
